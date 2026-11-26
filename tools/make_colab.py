@@ -31,7 +31,7 @@ HEADER = """# HW4 · {title}
 SETUP = """import os, glob, json, shutil, subprocess, time, re
 import torch
 from google.colab import drive, userdata
-drive.mount('/content/drive')
+drive.mount('/content/drive', force_remount=True)
 D = '/content/drive/MyDrive/hw4'
 RUNS, LOGS, W = f'{D}/runs', f'{D}/logs', '/content/weights'
 for p in (RUNS, LOGS, W): os.makedirs(p, exist_ok=True)
