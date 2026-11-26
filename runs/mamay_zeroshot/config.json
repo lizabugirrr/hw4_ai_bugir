@@ -1,0 +1,25 @@
+{
+ "model": "mamay",
+ "strategy": "zeroshot",
+ "splits": [
+  "val"
+ ],
+ "name": "mamay_zeroshot",
+ "n": 1,
+ "temperature": 0.0,
+ "k": 3,
+ "max_tokens": 1024,
+ "max_model_len": 4096,
+ "dtype": "auto",
+ "tp": 0,
+ "lora": null,
+ "max_lora_rank": 64,
+ "fallback": null,
+ "limit": null,
+ "save_all": false,
+ "backend": "llamacpp",
+ "server": "http://127.0.0.1:8080",
+ "workers": 8,
+ "seed": 0,
+ "out": null
+}

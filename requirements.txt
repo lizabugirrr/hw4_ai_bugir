@@ -1,0 +1,12 @@
+pandas
+pyarrow
+numpy
+scikit-learn
+matplotlib
+seaborn
+tqdm
+kaggle
+# GPU side (Kaggle T4): installed in the kernel
+# vllm>=0.8
+# transformers>=4.50
+# peft, trl, unsloth (fine-tuning)
