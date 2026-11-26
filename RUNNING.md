@@ -18,23 +18,22 @@ python kernels/fetch.py hw4-<name>        # -> runs/<name>/, prints results tabl
 python -m hw4.submission --run mamay_cot --out submissions/mamay_cot.csv
 ```
 
-## GPU runs on Colab (main path)
+## GPU runs on Colab (training part)
 ```bash
-python tools/make_colab.py    # -> kernels/colab_0*.ipynb + hw4-code.zip (upload the zip to MyDrive/hw4/)
+python tools/make_colab.py    # -> kernels/colab_00_all_a100.ipynb + hw4-code.zip (upload the zip to MyDrive/hw4/)
 ```
-Secrets: `KAGGLE_API_TOKEN` (data + Gemma from Kaggle Models), `HF_TOKEN` (only for publishing). Run in order:
+`kernels/colab_00_all_a100.ipynb` is a walkthrough of the GPU half: for every stage (teacher data → SFT MamayLM →
+Hugging Face → SFT Gemma → ablations → self-consistency → DPO → GRPO) it explains the method, shows the key
+implementation from the `hw4` package, runs it and displays the results. Secrets: `KAGGLE_API_TOKEN` (data + Gemma
+from Kaggle Models), `HF_TOKEN` (publishing). A100 ≈ 4 h (L4 also works). Results land in `MyDrive/hw4/runs/`;
+copy them into `runs/`, then `python -m hw4.runs` -> `results/experiments.csv`.
 
-| Notebook | GPU | What |
-|---|---|---|
-| `colab_01_prompting` | L4 | both models x zeroshot / cot / fewshot / plan / pot (tool use) / self-consistency, val (+ test) |
-| `colab_02_teacher` | L4 | synthetic problems (`hw4.synth`) + Qwen3-8B solutions, kept only if verified |
-| `colab_03_sft` | L4 | LoRA SFT (tool-use and CoT targets, with/without synthetic data), eval, HF publish |
-| `colab_04_dpo` | L4 | DPO on the SFT model's own mistakes, typical_errors-matching answers as rejected |
-| `colab_05_grpo` | A100 | GRPO with an executed-code correctness reward (bonus) |
-
-Models run in bfloat16 on one GPU (`--dtype auto --tp 0`). Results land in `MyDrive/hw4/runs/`; copy them into `runs/`,
-then `python -m hw4.runs` -> `results/experiments.csv`. Merged weights are rebuilt from adapters with
-`python -m hw4.merge --run <name>`.
+## Laptop runs (prompting, teacher on a 4 GB GPU)
+```bash
+tools/local_queue.sh teacher      # Qwen3-4B (4-bit GGUF) teacher data for the train side
+tools/local_queue.sh prompting    # both models x zero-shot / CoT / few-shot / plan / tool use / self-consistency
+```
+llama.cpp server with 4-bit GGUF models (`tools/llama_server.sh`, RAM-capped); clients via `safe_run.sh`.
 
 | Path | What |
 |---|---|
@@ -49,5 +48,6 @@ then `python -m hw4.runs` -> `results/experiments.csv`. Merged weights are rebui
 | `src/hw4/sft.py`, `dpo.py`, `grpo.py` | LoRA SFT, DPO, GRPO (TRL + PEFT) |
 | `src/hw4/train_utils.py`, `merge.py`, `hub.py` | student loading, LoRA merge for vLLM, HF publishing with model card |
 | `src/hw4/runs.py`, `submission.py` | run storage, submission file with format checks |
-| `tools/make_colab.py` | generates the Colab notebooks and the private code zip |
+| `tools/make_colab.py` | generates the Colab notebook and the private code zip |
+| `tools/llama_server.sh`, `local_queue.sh` | local 4-bit inference server and run queues |
 | `kernels/` | Kaggle launch (private code dataset + code-hash check) and fetch scripts |
