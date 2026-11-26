@@ -20,7 +20,7 @@ from .data import load_problems
 from .prompts import build
 from .runs import RUNS
 from .sandbox import extract_code, run_many
-from .train_utils import WEIGHTS, load_student, lora_config, save_adapter_and_merged
+from .train_utils import WEIGHTS, bf16_ok, make_config, warmup, load_student, lora_config, save_adapter_and_merged
 
 
 def _text(c) -> str:
@@ -62,8 +62,7 @@ def main():
 
     df = load_problems("train")
     if a.synth:
-        syn = load_problems(a.synth).groupby("skill", group_keys=False).apply(
-            lambda g: g.sample(min(len(g), a.synth_per_skill), random_state=a.seed))
+        syn = load_problems(a.synth).sample(frac=1, random_state=a.seed).groupby("skill").head(a.synth_per_skill)
         df = pd.concat([df, syn], ignore_index=True)
     df = df.sample(frac=1, random_state=a.seed)
     ds = Dataset.from_list([{"prompt": build("pot0", r), "answer": r["answer"], "statement": r["statement"]}
@@ -72,11 +71,11 @@ def main():
     model, tok, base_dir = load_student(a.model)
     kw = dict(use_vllm=True, vllm_mode="colocate", vllm_gpu_memory_utilization=0.3) if not a.no_vllm else {}
     out = Path(RUNS) / a.name
-    cfg = GRPOConfig(output_dir=str(out / "trainer"), learning_rate=a.lr, max_steps=a.max_steps, beta=a.beta,
+    cfg = make_config(GRPOConfig, output_dir=str(out / "trainer"), learning_rate=a.lr, max_steps=a.max_steps, beta=a.beta,
                      num_generations=a.num_generations, per_device_train_batch_size=a.bs, gradient_accumulation_steps=1,
-                     max_completion_length=a.max_completion, max_prompt_length=512, temperature=1.0, bf16=True,
+                     max_completion_length=a.max_completion, max_prompt_length=512, temperature=1.0, bf16=bf16_ok(),
                      gradient_checkpointing=True, logging_steps=5, save_strategy="no", report_to="none",
-                     seed=a.seed, lr_scheduler_type="constant_with_warmup", warmup_ratio=0.03, **kw)
+                     seed=a.seed, lr_scheduler_type="constant_with_warmup", **warmup(GRPOConfig, 0.03), **kw)
     tr = GRPOTrainer(model=model, args=cfg, train_dataset=ds, processing_class=tok,
                      reward_funcs=[reward_correct, reward_format], peft_config=lora_config(a.rank))
     t0 = time.time()

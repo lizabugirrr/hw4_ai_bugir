@@ -61,6 +61,7 @@ def main():
     ap.add_argument("--repo", required=True)
     ap.add_argument("--repo-link", default="")
     ap.add_argument("--private", action="store_true")
+    ap.add_argument("--dry", action="store_true", help="only write the model card")
     a = ap.parse_args()
 
     d = Path(RUNS) / a.run
@@ -89,6 +90,9 @@ def main():
                        base_acc=base_acc, strategy=evc["strategy"], acc=f"{ev['val_acc']:.3f}",
                        repo_link=f": {a.repo_link}" if a.repo_link else "")
     (d / "adapter" / "README.md").write_text(card)
+    if a.dry:
+        print(card)
+        return
 
     from huggingface_hub import HfApi
     api = HfApi()

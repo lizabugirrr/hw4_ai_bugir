@@ -87,12 +87,15 @@ def generate_llamacpp(convs: list[list[dict]], url: str, n: int, temperature: fl
             except Exception as e:  # server busy / restarted
                 if attempt == 2:
                     print("request failed:", e, flush=True)
-                    return ""
+                    return None
                 time.sleep(5)
 
     jobs = [(c, k) for c in convs for k in range(n)]
     with ThreadPoolExecutor(workers) as ex:
         flat = list(tqdm(ex.map(one, jobs), total=len(jobs), mininterval=30))
+    failed = sum(x is None for x in flat)
+    if failed:  # server died: do not save a run with silently empty answers
+        raise RuntimeError(f"{failed} of {len(flat)} requests failed; is llama-server running?")
     return [flat[i * n:(i + 1) * n] for i in range(len(convs))]
 
 

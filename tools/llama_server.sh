@@ -12,15 +12,17 @@ DEV="${DEV:-CUDA0}"            # Vulkan1 with the Vulkan build
 PORT="${PORT:-8080}"
 NP="${NP:-8}"                 # parallel slots (batched decoding)
 CTX="${CTX:-16384}"           # total context, split between slots
+[ "${1:-}" = "qwen3-4b" ] && CTX="${QCTX:-8192}"   # Qwen3-4B has a larger KV cache: 8 x 1024 tokens fits in 4 GB
 pkill -f "llama-server.*--port $PORT" 2>/dev/null || true
 [ "${1:-}" = "stop" ] && exit 0
 MODEL="weights/gguf/${1:?mamay|gemma|qwen3-4b|<name>}-Q4_K_M.gguf"
 LOG="runs/_logs/llama_server_$1.log"; mkdir -p runs/_logs
 systemd-run --user --scope --quiet -p MemoryMax="${MEM:-3G}" -p MemorySwapMax=0 \
   nice -n 5 "$BIN" -m "$MODEL" --device "$DEV" -ngl 99 -c "$CTX" -np "$NP" -fa on \
-  --cache-type-k q8_0 --cache-type-v q8_0 --port "$PORT" --no-webui --jinja > "$LOG" 2>&1 &
+  --cache-type-k q8_0 --cache-type-v q8_0 --port "$PORT" --no-webui --jinja --cache-ram 0 > "$LOG" 2>&1 &
 for i in $(seq 120); do
-  curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && { echo "server ready: $MODEL (port $PORT, $NP slots)"; exit 0; }
+  curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && { echo "server ready: $MODEL (port $PORT, $NP slots, ctx $CTX)"; exit 0; }
+  grep -q "exiting due to model loading error" "$LOG" 2>/dev/null && break
   sleep 1
 done
 echo "server did not start, see $LOG"; tail -20 "$LOG"; exit 1

@@ -25,7 +25,7 @@ from .data import load_split
 from .prompts import build
 from .runs import RUNS, load_preds
 from .sandbox import run_many
-from .train_utils import WEIGHTS, load_student, lora_config, save_adapter_and_merged
+from .train_utils import WEIGHTS, bf16_ok, make_config, warmup, load_student, lora_config, save_adapter_and_merged
 
 
 def make_pairs(samples: str, strategy: str, teacher_data: str | None, max_pairs_per_problem: int, seed: int) -> list[dict]:
@@ -89,10 +89,15 @@ def main():
     print(f"{len(pairs)} pairs, {sum(p['rejected_typical'] for p in pairs)} with a typical-error rejected answer", flush=True)
     ds = Dataset.from_list([{k: p[k] for k in ("prompt", "chosen", "rejected")} for p in pairs])
     model, tok, base_dir = load_student(a.model)
-    cfg = DPOConfig(output_dir=str(out / "trainer"), beta=a.beta, learning_rate=a.lr, num_train_epochs=a.epochs,
-                    per_device_train_batch_size=a.bs, gradient_accumulation_steps=a.grad_accum, bf16=True,
+    # TRL 0.2x treats any gemma3 config as an image-text model and expects images; we train on text only
+    import trl.trainer.dpo_trainer as dpo_mod
+    if hasattr(dpo_mod, "MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES"):
+        dpo_mod.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES = {
+            k: v for k, v in dpo_mod.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.items() if k != model.config.model_type}
+    cfg = make_config(DPOConfig, output_dir=str(out / "trainer"), beta=a.beta, learning_rate=a.lr, num_train_epochs=a.epochs,
+                    per_device_train_batch_size=a.bs, gradient_accumulation_steps=a.grad_accum, bf16=bf16_ok(),
                     max_length=1024, gradient_checkpointing=True, logging_steps=10, save_strategy="no",
-                    report_to="none", seed=a.seed, lr_scheduler_type="cosine", warmup_ratio=0.05)
+                    report_to="none", seed=a.seed, lr_scheduler_type="cosine", **warmup(DPOConfig, 0.05))
     tr = DPOTrainer(model=model, args=cfg, train_dataset=ds, processing_class=tok, peft_config=lora_config(a.rank))
     t0 = time.time()
     res = tr.train()

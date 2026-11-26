@@ -111,8 +111,12 @@ def summary():
         if 'val_acc' in r: rows.append(f"{n:34s} val_acc={r['val_acc']:.4f}  none={r.get('val_none')}")
     print('\\n'.join(rows))"""
 
-GO = """for cmd in QUEUE:
-    if run(cmd) != 0:
+GO = """# a command starting with '!' is critical: if it fails, the queue stops (no compute units burnt on dependent steps)
+for cmd in QUEUE:
+    critical = cmd.startswith('!')
+    if run(cmd.lstrip('!')) != 0:
+        if critical:
+            print('!! critical step failed, stopping the queue; see the log on Drive'); break
         print('!! failed, see the log; continuing with the next step')
 summary()"""
 
@@ -120,13 +124,63 @@ STOP = """if AUTO_STOP:
     from google.colab import runtime
     runtime.unassign()"""
 
+# versions tested together (vLLM 0.11 breaks on transformers 5 configs; TRL/PEFT tested on CPU with a tiny Gemma 3)
+VLLM_PIN = '"vllm==0.11.0" "transformers==4.57.1"'
+PINS = VLLM_PIN + ' "trl==0.24.0" "peft==0.17.1" datasets'
+T8 = "--teacher Qwen/Qwen3-8B --max-tokens 768"
+ALL_A100 = dict(
+    title="00 · Everything on one A100: teacher data, SFT, DPO, GRPO, evaluation, Hugging Face",
+    about=("One runtime for the whole training part (saves the ~6 min install per notebook). Steps: Qwen3-8B (bf16) writes "
+           "verified solutions for the train side and for my synthetic problems; LoRA SFT of MamayLM and Gemma on them; "
+           "ablations (no synthetic data; CoT targets); DPO on the SFT model's own mistakes; GRPO with an executed-code "
+           "reward; every model evaluated on the val split (bf16, vLLM) and exported to 4-bit GGUF for the laptop; the best "
+           "adapter published on Hugging Face. Steps marked critical stop the queue if they fail. ~4 h, ~45-50 units."),
+    gpu="A100 GPU", secrets=", `HF_TOKEN` (write token of the Hugging Face account, for publishing the adapter)",
+    pip=PINS, extra=["'trl'", "'peft'"],
+    queue=[
+        "# --- 1. teacher data (Qwen3-8B, thinking off); only solutions that reproduce the answer are kept ---",
+        "!python -m hw4.synth --per-skill 300 --out {R}/data_synth/problems.jsonl",
+        f"!python -m hw4.teacher {T8} --source train --style pot --n 4 --name data_qwen8b_pot_train",
+        f"!python -m hw4.teacher {T8} --source {{R}}/data_synth/problems.jsonl --style pot --n 2 --per-skill 150 --name data_qwen8b_pot_synth",
+        f"python -m hw4.teacher {T8} --source train --style cot --n 2 --name data_qwen8b_cot_train",
+        "# --- 2. main model: MamayLM, tool-use SFT on train side + synthetic ---",
+        "!python -m hw4.sft --model mamay --data {R}/data_qwen8b_pot_train/sft.jsonl {R}/data_qwen8b_pot_synth/sft.jsonl --name sft_mamay_pot",
+        "python -m hw4.infer --model mamay --strategy pot0 --fallback cot --splits val test --name colab_mamay_pot0",
+        "!python -m hw4.infer --model {W}/sft_mamay_pot --strategy pot0 --fallback cot --splits val test --name colab_sft_mamay_pot",
+        "python -m hw4.export_gguf --merged {W}/sft_mamay_pot --out {R}/gguf/sft_mamay_pot-Q4_K_M.gguf",
+        "# --- 3. publish the SFT adapter with a model card (val accuracy vs the base model) ---",
+        "python -m hw4.hub --run sft_mamay_pot --eval-run colab_sft_mamay_pot --base-eval-run colab_mamay_pot0 --repo lizabugir/mamaylm-4b-ukr-school-math-pot",
+        "# --- 4. the same recipe on Gemma ---",
+        "python -m hw4.sft --model gemma --data {R}/data_qwen8b_pot_train/sft.jsonl {R}/data_qwen8b_pot_synth/sft.jsonl --name sft_gemma_pot",
+        "python -m hw4.infer --model gemma --strategy pot0 --fallback cot --splits val test --name colab_gemma_pot0",
+        "python -m hw4.infer --model {W}/sft_gemma_pot --strategy pot0 --fallback cot --splits val test --name colab_sft_gemma_pot",
+        "# --- 5. ablations: no synthetic problems; CoT targets instead of code ---",
+        "python -m hw4.sft --model mamay --data {R}/data_qwen8b_pot_train/sft.jsonl --name sft_mamay_pot_trainonly",
+        "python -m hw4.infer --model {W}/sft_mamay_pot_trainonly --strategy pot0 --fallback cot --name colab_sft_mamay_pot_trainonly",
+        "python -m hw4.sft --model mamay --data {R}/data_qwen8b_cot_train/sft.jsonl --name sft_mamay_cot",
+        "python -m hw4.infer --model mamay --strategy cot --name colab_mamay_cot",
+        "python -m hw4.infer --model {W}/sft_mamay_cot --strategy cot --name colab_sft_mamay_cot",
+        "# --- 6. self-consistency on the fine-tuned model ---",
+        "python -m hw4.infer --model {W}/sft_mamay_pot --strategy pot0 --n 8 --temperature 0.7 --fallback cot --splits val test --name colab_sft_mamay_pot_sc8",
+        "# --- 7. DPO on the SFT model's own mistakes (typical_errors preferred as rejected) ---",
+        "python -m hw4.infer --model {W}/sft_mamay_pot --strategy pot0 --splits train --n 8 --temperature 0.8 --save-all --name samples_sft_mamay_train",
+        "python -m hw4.dpo --model {W}/sft_mamay_pot --samples samples_sft_mamay_train --teacher-data {R}/data_qwen8b_pot_train/sft.jsonl --name dpo_mamay_pot",
+        "python -m hw4.infer --model {W}/dpo_mamay_pot --strategy pot0 --fallback cot --splits val test --name colab_dpo_mamay_pot",
+        "python -m hw4.export_gguf --merged {W}/dpo_mamay_pot --out {R}/gguf/dpo_mamay_pot-Q4_K_M.gguf",
+        "# --- 8. bonus: GRPO with a verifiable reward (executed code == answer) ---",
+        "python -m hw4.grpo --model {W}/sft_mamay_pot --synth {R}/data_synth/problems.jsonl --max-steps 200 --name grpo_mamay_pot",
+        "python -m hw4.infer --model {W}/grpo_mamay_pot --strategy pot0 --fallback cot --splits val test --name colab_grpo_mamay_pot",
+        "python -m hw4.export_gguf --merged {W}/grpo_mamay_pot --out {R}/gguf/grpo_mamay_pot-Q4_K_M.gguf",
+    ])
+
 NOTEBOOKS = {
+    "colab_00_all_a100": ALL_A100,
     "colab_01_prompting": dict(
         title="01 · Prompting: both models × strategies",
         about=("Both models on the same fixed validation split (458 problems): zero-shot, chain-of-thought, few-shot "
                "(examples of the same skill from the train side), plan-then-solve, tool use (the model writes Python that we "
                "run), and self-consistency. CoT and tool-use runs also predict the test set for submissions."),
-        gpu="L4 GPU (bf16; ~25–40 min for the whole queue)", secrets="", pip="vllm", extra=[],
+        gpu="L4 GPU (bf16; ~25–40 min for the whole queue)", secrets="", pip=VLLM_PIN, extra=[],
         queue=[
             "# --- baselines: the organisers' setup (CoT, greedy) ---",
             "python -m hw4.infer --model mamay --strategy cot --splits val test --name mamay_cot",
@@ -153,7 +207,7 @@ NOTEBOOKS = {
         about=("Qwen3-8B (open, allowed as a teacher only) writes solutions for the TRAIN side of the split and for synthetic "
                "problems from my own generators (`hw4.synth`, 29 skills, exact answers). Only solutions that reproduce the "
                "reference answer are kept (code is executed). Val/test are never touched."),
-        gpu="L4 GPU (Qwen3-8B in bf16 fits in 24 GB; ~30–50 min)", secrets="", pip="vllm", extra=[],
+        gpu="L4 GPU (Qwen3-8B in bf16 fits in 24 GB; ~30–50 min)", secrets="", pip=VLLM_PIN, extra=[],
         queue=[
             "python -m hw4.synth --per-skill 300 --out {R}/data_synth/problems.jsonl",
             "python -m hw4.teacher --source train --style pot --n 4 --name data_qwen_pot_train",
@@ -168,7 +222,7 @@ NOTEBOOKS = {
                "+ synthetic problems (measured effect of synthetic data). Needs notebook 02 first. Set `PUBLISH = True` and the "
                "`HF_TOKEN` secret to publish the best adapter with a model card."),
         gpu="L4 GPU (~2–3 h for the whole queue; the first block alone ~40 min)", secrets=", `HF_TOKEN` (write token, only for publishing)",
-        pip="vllm trl peft datasets", extra=["'trl'", "'peft'"],
+        pip=PINS, extra=["'trl'", "'peft'"],
         queue=[
             "# --- main: tool-use SFT on verified Qwen3 solutions (train side + synthetic problems) ---",
             "python -m hw4.sft --model mamay --data {R}/data_qwen_pot_train/sft.jsonl {R}/data_qwen_pot_synth/sft.jsonl --name sft_mamay_pot",
@@ -199,25 +253,25 @@ if PUBLISH:
         about=("The SFT student samples 8 solutions per TRAIN-side problem; pairs are (correct, wrong) with wrong answers that "
                "match a `typical_errors` misconception preferred as rejected. LoRA DPO on top of the SFT model, then evaluation "
                "on val. Needs notebooks 02 and 03."),
-        gpu="L4 GPU (~1–1.5 h)", secrets="", pip="vllm trl peft datasets", extra=["'trl'", "'peft'"],
+        gpu="L4 GPU (~1–1.5 h)", secrets="", pip=PINS, extra=["'trl'", "'peft'"],
         queue=[
             "python -m hw4.merge --run sft_mamay_pot",
             "python -m hw4.infer --model {W}/sft_mamay_pot --strategy pot0 --splits train --n 8 --temperature 0.8 --save-all --name samples_sft_mamay_train",
             "python -m hw4.dpo --model {W}/sft_mamay_pot --samples samples_sft_mamay_train --teacher-data {R}/data_qwen_pot_train/sft.jsonl --name dpo_mamay_pot",
-            "python -m hw4.merge --run dpo_mamay_pot",
-            "python -m hw4.infer --model {W}/dpo_mamay_pot --strategy pot0 --fallback cot --splits val test --name dpo_mamay_pot_eval",
+            "python -m hw4.export_gguf --merged {W}/dpo_mamay_pot --out {R}/gguf/dpo_mamay_pot-Q4_K_M.gguf",
+            "python -m hw4.infer --model {W}/dpo_mamay_pot --strategy pot0 --fallback cot --splits val test --name colab_dpo_mamay_pot",
         ]),
     "colab_05_grpo": dict(
         title="05 · GRPO with verifiable rewards (bonus)",
         about=("Reinforcement learning on the SFT student: 8 code solutions per problem, reward 1 when executing the code gives "
                "the reference answer (+0.1 for the format). Problems: train side + synthetic. Needs notebooks 02 and 03."),
         gpu="A100 GPU (vLLM generation colocated with training; on L4 add --no-vllm and fewer steps)", secrets="",
-        pip="vllm trl peft datasets", extra=["'trl'", "'peft'"],
+        pip=PINS, extra=["'trl'", "'peft'"],
         queue=[
             "python -m hw4.merge --run sft_mamay_pot",
             "python -m hw4.grpo --model {W}/sft_mamay_pot --synth {R}/data_synth/problems.jsonl --max-steps 300 --name grpo_mamay_pot",
-            "python -m hw4.merge --run grpo_mamay_pot",
-            "python -m hw4.infer --model {W}/grpo_mamay_pot --strategy pot0 --fallback cot --splits val test --name grpo_mamay_pot_eval",
+            "python -m hw4.export_gguf --merged {W}/grpo_mamay_pot --out {R}/gguf/grpo_mamay_pot-Q4_K_M.gguf",
+            "python -m hw4.infer --model {W}/grpo_mamay_pot --strategy pot0 --fallback cot --splits val test --name colab_grpo_mamay_pot",
         ]),
 }
 

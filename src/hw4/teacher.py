@@ -65,7 +65,7 @@ def main():
 
     df = load_problems(a.source)
     if a.per_skill:
-        df = df.groupby("skill", group_keys=False).apply(lambda g: g.sample(min(len(g), a.per_skill), random_state=a.seed))
+        df = df.sample(frac=1, random_state=a.seed).groupby("skill").head(a.per_skill)
     df = df.reset_index(drop=True)
     strategy = "pot0" if a.style == "pot" else "cot"
     prompts = [build(strategy, r) for _, r in df.iterrows()]

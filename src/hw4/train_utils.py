@@ -13,6 +13,29 @@ WEIGHTS = Path(os.environ.get("HW4_WEIGHTS", ROOT / "weights"))
 LORA_TARGETS = r".*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$"
 
 
+def bf16_ok() -> bool:
+    """bf16 only on Ampere+ GPUs (L4, A100); fp32 elsewhere (CPU tests, T4 uses the unsloth path)."""
+    import torch
+    return torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 8
+
+
+def warmup(cfg_cls, ratio: float) -> dict:
+    """transformers 5 dropped warmup_ratio (warmup_steps < 1 is a ratio there); 4.x still has it."""
+    import dataclasses
+    names = {f.name for f in dataclasses.fields(cfg_cls)}
+    return {"warmup_ratio": ratio} if "warmup_ratio" in names else {"warmup_steps": ratio}
+
+
+def make_config(cfg_cls, **kw):
+    """Builds a TRL config, dropping options this TRL version does not have (their names change between releases)."""
+    import dataclasses
+    names = {f.name for f in dataclasses.fields(cfg_cls)}
+    dropped = sorted(k for k in kw if k not in names)
+    if dropped:
+        print(f"{cfg_cls.__name__}: options not in this TRL version, ignored: {dropped}", flush=True)
+    return cfg_cls(**{k: v for k, v in kw.items() if k in names})
+
+
 def local_dir(model: str) -> str:
     """Model name/path -> local directory with config and tokenizer files."""
     from .infer import resolve_model

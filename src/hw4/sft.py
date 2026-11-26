@@ -15,7 +15,7 @@ from collections import Counter
 from pathlib import Path
 
 from .runs import RUNS
-from .train_utils import WEIGHTS, load_student, lora_config, save_adapter_and_merged
+from .train_utils import WEIGHTS, bf16_ok, make_config, warmup, load_student, lora_config, save_adapter_and_merged
 
 
 def read_jsonl(paths: list[str], max_per_skill: int | None, seed: int) -> list[dict]:
@@ -61,9 +61,9 @@ def main():
     print(f"{len(ds)} training examples", flush=True)
     model, tok, base_dir = load_student(a.model)
     out = Path(RUNS) / a.name
-    cfg = SFTConfig(output_dir=str(out / "trainer"), num_train_epochs=a.epochs, per_device_train_batch_size=a.bs,
+    cfg = make_config(SFTConfig, output_dir=str(out / "trainer"), num_train_epochs=a.epochs, per_device_train_batch_size=a.bs,
                     gradient_accumulation_steps=a.grad_accum, learning_rate=a.lr, lr_scheduler_type="cosine",
-                    warmup_ratio=0.03, logging_steps=10, bf16=True, max_length=a.max_length,
+                    **warmup(SFTConfig, 0.03), logging_steps=10, bf16=bf16_ok(), max_length=a.max_length,
                     completion_only_loss=True, gradient_checkpointing=True, save_strategy="no",
                     report_to="none", seed=a.seed)
     tr = SFTTrainer(model=model, args=cfg, train_dataset=ds, processing_class=tok, peft_config=lora_config(a.rank))
@@ -97,9 +97,9 @@ def train_unsloth(a, rows):
     ds = Dataset.from_dict({"text": texts})
     print(f"{len(ds)} training examples (unsloth)", flush=True)
     out = Path(RUNS) / a.name
-    cfg = SFTConfig(output_dir=str(out / "trainer"), dataset_text_field="text", num_train_epochs=a.epochs,
+    cfg = make_config(SFTConfig, output_dir=str(out / "trainer"), dataset_text_field="text", num_train_epochs=a.epochs,
                     per_device_train_batch_size=a.bs, gradient_accumulation_steps=a.grad_accum, learning_rate=a.lr,
-                    lr_scheduler_type="cosine", warmup_ratio=0.03, logging_steps=10, max_length=a.max_length,
+                    lr_scheduler_type="cosine", **warmup(SFTConfig, 0.03), logging_steps=10, max_length=a.max_length,
                     optim="adamw_8bit", weight_decay=0.01, save_strategy="no", report_to="none", seed=a.seed,
                     dataset_num_proc=1)
     tr = SFTTrainer(model=model, tokenizer=text_tok, train_dataset=ds, args=cfg)

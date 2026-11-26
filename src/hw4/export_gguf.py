@@ -27,8 +27,8 @@ def setup() -> tuple[Path, Path]:
     src = WORK / "src"
     if not (src / "convert_hf_to_gguf.py").exists():
         sh(f"git clone -q --depth 1 --branch {TAG} https://github.com/ggml-org/llama.cpp {src}")
-        sh(f"{sys.executable} -m pip install -q gguf sentencepiece mistral-common || true")
-        sh(f"{sys.executable} -m pip install -q -e {src}/gguf-py")
+        # convert_hf_to_gguf.py imports gguf from its own gguf-py/ folder; it needs torch, transformers, sentencepiece
+        sh(f"{sys.executable} -m pip install -q sentencepiece 2>/dev/null || true")
     q = glob.glob(f"{WORK}/bin/**/llama-quantize", recursive=True)
     if not q:
         url = f"https://github.com/ggml-org/llama.cpp/releases/download/{TAG}/llama-{TAG}-bin-ubuntu-x64.tar.gz"

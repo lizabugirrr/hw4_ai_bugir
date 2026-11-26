@@ -25,9 +25,9 @@ gemma|-m hw4.infer $L --model gemma --strategy pot --n 5 --temperature 0.7 --fal
 Q
 }
 teacher() { cat <<Q
-qwen3-4b|-m hw4.teacher $L --teacher Qwen/Qwen3-4B-GGUF:Q4_K_M --source train --style pot --n 4 --name data_qwen_pot_train
-qwen3-4b|-m hw4.teacher $L --teacher Qwen/Qwen3-4B-GGUF:Q4_K_M --source runs/data_synth/problems.jsonl --style pot --n 2 --per-skill 80 --name data_qwen_pot_synth
-qwen3-4b|-m hw4.teacher $L --teacher Qwen/Qwen3-4B-GGUF:Q4_K_M --source train --style cot --n 2 --name data_qwen_cot_train
+qwen3-4b|-m hw4.teacher $L --teacher Qwen/Qwen3-4B-GGUF:Q4_K_M --source train --style pot --n 4 --max-tokens 768 --name data_qwen_pot_train
+qwen3-4b|-m hw4.teacher $L --teacher Qwen/Qwen3-4B-GGUF:Q4_K_M --source runs/data_synth/problems.jsonl --style pot --n 2 --per-skill 80 --max-tokens 768 --name data_qwen_pot_synth
+qwen3-4b|-m hw4.teacher $L --teacher Qwen/Qwen3-4B-GGUF:Q4_K_M --source train --style cot --n 2 --max-tokens 768 --name data_qwen_cot_train
 Q
 }
 case "${1:?prompting|teacher|file}" in
