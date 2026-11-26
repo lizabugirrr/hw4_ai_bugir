@@ -19,6 +19,8 @@ from fractions import Fraction
 __ns = {{"math": math, "Fraction": Fraction, "fractions": fractions}}
 exec(compile({code!r}, "<model>", "exec"), __ns)
 a = __ns.get("answer")
+if isinstance(a, str):  # e.g. "12 1/2" or "3,5": parsed by the same parser as text answers
+    print("S:" + a.replace("\\n", " ")); raise SystemExit(0)
 if isinstance(a, float):
     a = Fraction(a).limit_denominator(10**9)
 a = Fraction(a)
@@ -47,7 +49,12 @@ def run_code(code: str | None, timeout: float = 5.0) -> tuple[Fraction | None, s
     if p.returncode != 0:
         return None, (p.stderr.strip().splitlines() or ["error"])[-1][:200]
     try:
-        return Fraction(p.stdout.strip().splitlines()[-1]), ""
+        last = p.stdout.strip().splitlines()[-1]
+        if last.startswith("S:"):
+            from .answers import parse_number
+            v = parse_number(last[2:])
+            return (v, "") if v is not None else (None, "string answer without a number")
+        return Fraction(last), ""
     except (ValueError, IndexError, ZeroDivisionError):
         return None, "bad output"
 

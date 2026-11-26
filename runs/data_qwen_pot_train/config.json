@@ -1,0 +1,17 @@
+{
+ "teacher": "Qwen/Qwen3-4B-GGUF:Q4_K_M",
+ "source": "train",
+ "style": "pot",
+ "name": "data_qwen_pot_train",
+ "n": 4,
+ "keep": 1,
+ "per_skill": null,
+ "temperature": 0.7,
+ "max_tokens": 768,
+ "dtype": "auto",
+ "tp": 1,
+ "backend": "llamacpp",
+ "server": "http://127.0.0.1:8080",
+ "workers": 8,
+ "seed": 0
+}
